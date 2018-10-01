@@ -14,6 +14,8 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
+# Based on API information found at http://www.smartofthehome.com/2016/05/hive-rest-api-v6/
+
 import requests
 import json
 import time
@@ -25,13 +27,14 @@ class HiveAPI:
     nodesUrl = baseUrl + "/nodes"
     channelsUrl = baseUrl + "/channels"
 
-    headers = { "Content-Type": "application/vnd.alertme.zoo-6.1+json",
-                "Accept": "application/vnd.alertme.zoo-6.1+json",
+    headers = { "Content-Type": "application/vnd.alertme.zoo-6.6+json",
+                "Accept": "application/vnd.alertme.zoo-6.6+json",
                 "X-Omnia-Client": "Hive Web Dashboard" }
 
     def __init__(self,):
         self.channels = {}
         self.sessionId = ""
+        self.nodes = None
 
     def connectExistingSession(self, sessionId):
         self.sessionId = sessionId
@@ -51,6 +54,37 @@ class HiveAPI:
         else:
             r.raise_for_status()
 
+    def clearAllCachedData(self):
+        self.nodes = None
+        self.channels = {}
+
+    def getNodes(self):
+        if self.nodes is None:
+            r = requests.get(self.nodesUrl, headers=self.allHeaders)
+            if r.status_code == requests.codes.ok:
+                content = json.loads(r.text)
+                self.nodes = content["nodes"]
+            else:
+                r.raise_for_status()
+
+    def isHeatingEnabled(self):
+        self.getNodes()
+        for node in self.nodes:
+            if "attributes" in node:
+                if "stateHeatingRelay" in node["attributes"]:
+                    if node["attributes"]["stateHeatingRelay"]["reportedValue"] == "ON":
+                        return True
+        return False
+
+    def isHotWaterEnabled(self):
+        self.getNodes()
+        for node in self.nodes:
+            if "attributes" in node:
+                if "stateHotWaterRelay" in node["attributes"]:
+                    if node["attributes"]["stateHotWaterRelay"]["reportedValue"] == "ON":
+                        return True
+        return False
+
     def getChannels(self):
         r = requests.get(self.channelsUrl, headers=self.allHeaders)
         if r.status_code == requests.codes.ok:
@@ -66,8 +100,20 @@ class HiveAPI:
      
     def getTemperature(self, channel):
         epoch_time_before = str(int(time.time()-600)*1000)
-        epoch_time_now = str(int(time.time())*1000)
+        epoch_time_now = str(int(time.time()-1)*1000)
         url = self.channelsUrl + "/" + channel + "?start="+epoch_time_before+"&end="+epoch_time_now+"&rate=5&timeUnit=MINUTES&operation=AVG"
+        r = requests.get(url, headers=self.allHeaders)
+        if r.status_code == requests.codes.ok:
+            data = json.loads(r.text)
+            tempValues = data["channels"][0]["values"]
+            return next(iter(tempValues.values()))
+        else:
+            r.raise_for_status()
+
+    def getControllerState(self, channel):
+        epoch_time_before = str(int(time.time()-600)*1000)
+        epoch_time_now = str(int(time.time()-1)*1000)
+        url = self.channelsUrl + "/" + channel + "?start="+epoch_time_before+"&end="+epoch_time_now+"&rate=5&timeUnit=MINUTES&operation=DATASET"
         r = requests.get(url, headers=self.allHeaders)
         if r.status_code == requests.codes.ok:
             data = json.loads(r.text)
@@ -82,4 +128,12 @@ class HiveAPI:
             self.getChannels()
         for channel in self.channels["temperature"]:
             temps.append( self.getTemperature( channel ) )
+        return temps
+
+    def getControllerStates(self):
+        temps = []
+        if len( self.channels ) == 0:
+            self.getChannels()
+        for channel in self.channels["controllerState"]:
+            temps.append( self.getControllerState( channel ) )
         return temps
